@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGO_URL")
+}
+
+// ─── Users ───
+model User {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  email        String   @unique
+  name         String?
+  password     String? // Hashed password
+  department   String?
+  avatarUrl    String?
+  role         Role     @default(EMPLOYEE)
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  updates       Update[]
+  votes         Vote[]
+  feedbacks     Feedback[]
+  replies       Reply[]
+  otps          OTP[]
+  statusHistory UpdateStatusHistory[]
+
+  // Admin Logs
+  logsTargeted  AdminLog[] @relation("TargetUser")
+  logsCreated   AdminLog[] @relation("AdminUser")
+}
+
+enum Role {
+  ADMIN
+  MANAGEMENT
+  EMPLOYEE
+}
+
+// ─── Products (5 internal products) ───
+model Product {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  updates   Update[]
+  feedbacks Feedback[]
+}
+
+// ─── Product Updates ───
+model Update {
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String
+  status      UpdateStatus @default(WIP)
+  productId   String       @db.ObjectId
+  authorId    String       @db.ObjectId
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  product       Product              @relation(fields: [productId], references: [id])
+  author        User?                @relation(fields: [authorId], references: [id])
+  votes         Vote[]
+  statusHistory UpdateStatusHistory[]
+}
+
+enum UpdateStatus {
+  WIP
+  IN_PROGRESS
+  DONE
+  SHIPPED
+  Completed
+  Backlog
+}
+
+// ─── Votes (upvote/downvote) ───
+model Vote {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  type      VoteType
+  userId    String   @db.ObjectId
+  updateId  String   @db.ObjectId
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  update Update @relation(fields: [updateId], references: [id])
+
+  @@unique([userId, updateId])
+}
+
+enum VoteType {
+  UP
+  DOWN
+}
+
+// ─── Update Status History ───
+model UpdateStatusHistory {
+  id        String       @id @default(auto()) @map("_id") @db.ObjectId
+  updateId  String       @db.ObjectId
+  fromStatus UpdateStatus?
+  toStatus  UpdateStatus
+  changedBy String       @db.ObjectId
+  reason    String?
+  createdAt DateTime     @default(now())
+
+  update Update @relation(fields: [updateId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [changedBy], references: [id])
+
+  @@index([updateId, createdAt])
+}
+
+// ─── Feedback Wall ───
+model Feedback {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  message   String
+  productId String   @db.ObjectId
+  authorId  String   @db.ObjectId
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+  author  User?    @relation(fields: [authorId], references: [id])
+  replies Reply[]
+
+  @@index([productId, createdAt])
+}
+
+// ─── Replies to Feedback ───
+model Reply {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  message    String
+  feedbackId String   @db.ObjectId
+  authorId   String   @db.ObjectId
+  createdAt  DateTime @default(now())
+
+  feedback Feedback @relation(fields: [feedbackId], references: [id])
+  author   User?     @relation(fields: [authorId], references: [id])
+
+  @@index([feedbackId, createdAt])
+}
+
+// ─── OTP for Authentication ───
+model OTP {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String
+  code      String
+  userId    String?  @db.ObjectId
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  isUsed    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([email, isUsed, expiresAt])
+}
+
+// ─── Admin Activity Logs ───
+model AdminLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  action      String   // "APPROVE", "REJECT", "REMOVE", "ROLE_CHANGE"
+  targetId    String?  @db.ObjectId
+  targetName  String?  // Snapshot of name in case user is deleted
+  targetEmail String?  // Snapshot of email in case user is deleted
+  adminId     String?  @db.ObjectId
+  details     String?  // e.g., "Role changed from EMPLOYEE to MANAGER"
+  createdAt   DateTime @default(now())
+  
+  // Set null on delete, or cascade if you want to lose history
+  // For audit logs, usually we keep history even if user is deleted, 
+  // but Prisma requires relation existence unless optional.
+  // Best practice: Make relation optional OR use onDelete: SetNull (if field nullable) 
+  // OR keep the log but make the relation disconnected?
+  // Prisma/Mongo doesn't support SetNull on list relations easily sometimes.
+  // Given user wants to "remove" user, let's keep logs but maybe make the relation optional?
+  // Actually, for simplicity and ensuring deletion works now:
+  
+  targetUser  User?    @relation("TargetUser", fields: [targetId], references: [id], onDelete: SetNull)
+  adminUser   User?    @relation("AdminUser", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
